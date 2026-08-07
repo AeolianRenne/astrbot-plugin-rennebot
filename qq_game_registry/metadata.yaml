@@ -1,0 +1,9 @@
+name: qq_game_registry
+display_name: RenneBot Game ID Registry
+desc: Group game-ID registration, lookup, and controlled AI replies.
+version: 0.1.0
+author: RenneBot
+repo: ""
+astrbot_version: ">=4.27,<5"
+support_platforms:
+  - qq_official
