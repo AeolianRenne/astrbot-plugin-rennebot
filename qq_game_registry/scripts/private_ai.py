@@ -59,7 +59,7 @@ class PrivateAIService:
         research_prefix = next(
             (
                 prefix
-                for prefix in ("开始联网任务：", "开始联网任务:")
+                for prefix in ("开始任务：", "开始任务:")
                 if message.startswith(prefix)
             ),
             None,
@@ -67,11 +67,11 @@ class PrivateAIService:
         if research_prefix:
             goal = message.removeprefix(research_prefix).strip()
             if not goal:
-                return "请在“开始联网任务：”后说明需要完成的任务目标。"
+                return "请在“开始任务：”后说明需要完成的任务目标。"
             if conversation.mode == "conversation":
-                return "当前正在进行普通对话。请先发送“结束对话”，再开始联网任务。"
+                return "当前正在进行普通对话。请先发送“结束对话”，再开始任务。"
             if conversation.mode == "research_task":
-                return "当前正在执行联网任务。请先发送“结束当前任务”，再开始新任务。"
+                return "当前正在执行任务。请先发送“结束当前任务”，再开始新任务。"
             if is_developer_privacy_request(goal):
                 return "为保护开发者隐私，我不能回答任何关于开发者的问题。"
             if contains_sensitive_text(goal):
@@ -80,10 +80,10 @@ class PrivateAIService:
                 )
             return await self.research_task.start(sender_id, goal)
         if message == "结束当前任务" and conversation.mode != "research_task":
-            return "当前没有进行中的联网任务。"
+            return "当前没有进行中的任务。"
         if message == "开启新对话":
             if conversation.mode == "research_task":
-                return "当前正在执行联网任务。请先发送“结束当前任务”，再开启新对话。"
+                return "当前正在执行任务。请先发送“结束当前任务”，再开启新对话。"
             if conversation.mode == "conversation":
                 return "当前正在进行普通对话。请先发送“结束对话”，再开启新对话。"
             self.database.set_private_ai_conversation(sender_id, True, "", [])
@@ -92,7 +92,7 @@ class PrivateAIService:
             )
         if conversation.mode == "research_task":
             if message == "结束对话":
-                return "当前正在执行联网任务。请发送“结束当前任务”结束它。"
+                return "当前正在执行任务。请发送“结束当前任务”结束它。"
             if is_developer_privacy_request(message):
                 return "为保护开发者隐私，我不能回答任何关于开发者的问题。"
             if len(message) > self.message_max_chars:

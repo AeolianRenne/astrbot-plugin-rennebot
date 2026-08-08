@@ -181,7 +181,7 @@ class ResearchTaskService:
             task_goal=goal,
         )
         response = await self._research(sender_id, goal, "")
-        return f"已开始联网任务：{goal}\n\n{response}"
+        return f"已开始任务：{goal}\n\n{response}"
 
     async def handle(
         self,
@@ -202,7 +202,7 @@ class ResearchTaskService:
         if message == "结束当前任务":
             self.database.delete_cache_scope("research_search", "user", sender_id)
             self.database.set_private_ai_conversation(sender_id, False, "", [])
-            return "当前联网任务已结束。需要普通对话时，请发送“开启新对话”。"
+            return "当前任务已结束。需要普通对话时，请发送“开启新对话”。"
         if message == "清理上下文":
             self.database.set_private_ai_conversation(
                 sender_id,
@@ -212,7 +212,7 @@ class ResearchTaskService:
                 mode="research_task",
                 task_goal=conversation.task_goal,
             )
-            return "任务过程上下文已清理，当前联网任务目标仍然保留。"
+            return "任务过程上下文已清理，当前任务目标仍然保留。"
         return await self._research(sender_id, conversation.task_goal, message)
 
     async def _research(self, sender_id: str, goal: str, message: str) -> str:
@@ -230,7 +230,7 @@ class ResearchTaskService:
         try:
             sources = await self._search_cached(sender_id, query)
         except ResearchConfigurationError:
-            return "联网任务已创建，但搜索服务尚未配置。请联系管理员配置 TAVILY_API_KEY 后再继续任务。"
+            return "任务已创建，但搜索服务尚未配置。请联系管理员配置 TAVILY_API_KEY 后再继续任务。"
         except ResearchRequestError:
             return "联网搜索暂时不可用，本轮未调用 AI 进行无来源推测，请稍后重试。"
         if not sources:
