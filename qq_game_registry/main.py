@@ -14,11 +14,14 @@ from .commands import message_text_from_plain_components
 from .database import PluginDatabase
 from .scripts.group_registry import handle_group_message
 from .scripts.private_ai import PrivateAIService
+from .scripts.research_task import ResearchTaskService, TavilySearchProvider
 from .scripts.runtime_config import handle_config_message
 
 _PRIVATE_CONTEXT_MAX_CHARS_DEFAULT = 120_000
 _PRIVATE_CONTEXT_RECENT_MESSAGES_DEFAULT = 24
 _PRIVATE_MESSAGE_MAX_CHARS_DEFAULT = 8_000
+_RESEARCH_MAX_SOURCES_DEFAULT = 5
+_RESEARCH_CACHE_TTL_SECONDS_DEFAULT = 900
 
 
 def _configured_ids(variable: str) -> set[str]:
@@ -69,6 +72,23 @@ class Main(Star):
             if bootstrap_admins:
                 self.database.set_setting("admin_user_ids", sorted(bootstrap_admins))
         self.ai_client = OpenAICompatibleClient()
+        self.research_task = ResearchTaskService(
+            self.database,
+            self.ai_client,
+            TavilySearchProvider(),
+            _positive_int(
+                "AI_PRIVATE_CONTEXT_MAX_CHARS", _PRIVATE_CONTEXT_MAX_CHARS_DEFAULT
+            ),
+            _positive_int(
+                "AI_PRIVATE_CONTEXT_RECENT_MESSAGES",
+                _PRIVATE_CONTEXT_RECENT_MESSAGES_DEFAULT,
+            ),
+            _positive_int("AI_RESEARCH_MAX_SOURCES", _RESEARCH_MAX_SOURCES_DEFAULT),
+            _positive_int(
+                "AI_RESEARCH_CACHE_TTL_SECONDS",
+                _RESEARCH_CACHE_TTL_SECONDS_DEFAULT,
+            ),
+        )
         self.private_ai = PrivateAIService(
             self.database,
             self.ai_client,
@@ -82,6 +102,7 @@ class Main(Star):
             _positive_int(
                 "AI_PRIVATE_MESSAGE_MAX_CHARS", _PRIVATE_MESSAGE_MAX_CHARS_DEFAULT
             ),
+            self.research_task,
         )
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=100)

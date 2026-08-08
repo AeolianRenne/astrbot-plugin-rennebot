@@ -33,6 +33,8 @@ class PrivateAIConversation:
     active: bool
     summary: str
     messages: list[dict[str, str]]
+    mode: str = "inactive"
+    task_goal: str = ""
 
 
 class PluginDatabase:
@@ -241,6 +243,28 @@ class PluginDatabase:
                 return None
         return json.loads(row["value_json"])
 
+    def delete_cache_scope(
+        self, namespace: str, scope_type: str, scope_id: str
+    ) -> None:
+        """Delete all cache entries owned by one feature scope.
+
+        Args:
+            namespace: Feature-owned cache namespace.
+            scope_type: One of global, group, or user.
+            scope_id: Scope identifier; use an empty string for global data.
+
+        Raises:
+            ValueError: If scope_type is unsupported.
+        """
+        if scope_type not in {"global", "group", "user"}:
+            raise ValueError(f"unsupported cache scope type: {scope_type}")
+        with self._connection() as connection:
+            connection.execute(
+                "DELETE FROM cache_entries "
+                "WHERE namespace = ? AND scope_type = ? AND scope_id = ?",
+                (namespace, scope_type, scope_id),
+            )
+
     def get_private_ai_conversation(self, user_id: str) -> PrivateAIConversation:
         """Read one user's private AI session with defensive JSON validation.
 
@@ -264,10 +288,19 @@ class PluginDatabase:
                 if role in {"user", "assistant"} and isinstance(content, str):
                     messages.append({"role": role, "content": content})
         summary = value.get("summary", "")
+        active = bool(value.get("active", False))
+        mode = value.get("mode")
+        if mode not in {"inactive", "conversation", "research_task"}:
+            mode = "conversation" if active else "inactive"
+        if mode == "inactive":
+            active = False
+        task_goal = value.get("task_goal", "")
         return PrivateAIConversation(
-            active=bool(value.get("active", False)),
+            active=active,
             summary=summary if isinstance(summary, str) else "",
             messages=messages,
+            mode=mode,
+            task_goal=task_goal if isinstance(task_goal, str) else "",
         )
 
     def set_private_ai_conversation(
@@ -276,6 +309,8 @@ class PluginDatabase:
         active: bool,
         summary: str,
         messages: list[dict[str, str]],
+        mode: str | None = None,
+        task_goal: str = "",
     ) -> None:
         """Persist one user's private AI session.
 
@@ -284,13 +319,28 @@ class PluginDatabase:
             active: Whether ordinary private messages should call AI.
             summary: Compact memory of older conversation turns.
             messages: Recent user and assistant turns to send verbatim.
+            mode: Explicit session mode. Old records infer this from ``active``.
+            task_goal: Research-task goal, kept empty for ordinary conversations.
         """
+        if mode is None:
+            mode = "conversation" if active else "inactive"
+        if mode not in {"inactive", "conversation", "research_task"}:
+            raise ValueError("unsupported private AI session mode")
+        if mode == "inactive":
+            active = False
+            task_goal = ""
         self.set_cache(
             "private_ai",
             "user",
             user_id,
             "conversation",
-            {"active": active, "summary": summary, "messages": messages},
+            {
+                "active": active,
+                "summary": summary,
+                "messages": messages,
+                "mode": mode,
+                "task_goal": task_goal,
+            },
         )
 
     def set_setting(self, key: str, value: Any) -> None:

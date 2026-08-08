@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ..ai_client import OpenAICompatibleClient
 from ..database import PluginDatabase, PrivateAIConversation
+from .research_task import ResearchTaskService
 from .safety import (
     PRIVATE_AI_SAFETY_PROMPT,
     PRIVATE_SUMMARY_SAFETY_PROMPT,
@@ -25,6 +26,7 @@ class PrivateAIService:
         context_max_chars: int,
         context_recent_messages: int,
         message_max_chars: int,
+        research_task: ResearchTaskService,
     ) -> None:
         """Initialize the service with runtime configuration.
 
@@ -34,12 +36,14 @@ class PrivateAIService:
             context_max_chars: Character budget before older messages are summarized.
             context_recent_messages: Recent messages preserved after summarization.
             message_max_chars: Maximum accepted length of one private user message.
+            research_task: Controlled web-research task service.
         """
         self.database = database
         self.ai_client = ai_client
         self.context_max_chars = context_max_chars
         self.context_recent_messages = context_recent_messages
         self.message_max_chars = message_max_chars
+        self.research_task = research_task
 
     async def handle(self, sender_id: str, message: str) -> str | None:
         """Handle one authorized user's private message.
@@ -52,11 +56,53 @@ class PrivateAIService:
             A response when a command or active conversation handles the message.
         """
         conversation = self._load_sanitized_conversation(sender_id)
+        research_prefix = next(
+            (
+                prefix
+                for prefix in ("开始联网任务：", "开始联网任务:")
+                if message.startswith(prefix)
+            ),
+            None,
+        )
+        if research_prefix:
+            goal = message.removeprefix(research_prefix).strip()
+            if not goal:
+                return "请在“开始联网任务：”后说明需要完成的任务目标。"
+            if conversation.mode == "conversation":
+                return "当前正在进行普通对话。请先发送“结束对话”，再开始联网任务。"
+            if conversation.mode == "research_task":
+                return "当前正在执行联网任务。请先发送“结束当前任务”，再开始新任务。"
+            if is_developer_privacy_request(goal):
+                return "为保护开发者隐私，我不能回答任何关于开发者的问题。"
+            if contains_sensitive_text(goal):
+                return (
+                    "为保护安全，请不要在任务中发送密钥、令牌、密码、私钥或服务器配置。"
+                )
+            return await self.research_task.start(sender_id, goal)
+        if message == "结束当前任务" and conversation.mode != "research_task":
+            return "当前没有进行中的联网任务。"
         if message == "开启新对话":
+            if conversation.mode == "research_task":
+                return "当前正在执行联网任务。请先发送“结束当前任务”，再开启新对话。"
+            if conversation.mode == "conversation":
+                return "当前正在进行普通对话。请先发送“结束对话”，再开启新对话。"
             self.database.set_private_ai_conversation(sender_id, True, "", [])
             return (
                 "已开启新对话。之后的普通消息会保留上下文；发送“清理上下文”可重置记忆。"
             )
+        if conversation.mode == "research_task":
+            if message == "结束对话":
+                return "当前正在执行联网任务。请发送“结束当前任务”结束它。"
+            if is_developer_privacy_request(message):
+                return "为保护开发者隐私，我不能回答任何关于开发者的问题。"
+            if len(message) > self.message_max_chars:
+                return f"单条消息不能超过 {self.message_max_chars} 个字符，请拆分后再发送。"
+            if contains_sensitive_text(message):
+                return (
+                    "为保护安全，请不要发送密钥、令牌、密码、私钥或服务器配置。"
+                    "这条消息不会被联网检索、发送给 AI 或写入任务上下文。"
+                )
+            return await self.research_task.handle(sender_id, conversation, message)
         if message == "清理上下文":
             if not conversation.active:
                 return "当前没有开启中的 AI 对话。发送“开启新对话”开始。"
@@ -96,6 +142,7 @@ class PrivateAIService:
         """
         conversation = self.database.get_private_ai_conversation(sender_id)
         safe_summary = redact_sensitive_text(conversation.summary)
+        safe_task_goal = redact_sensitive_text(conversation.task_goal)
         safe_messages = [
             {"role": item["role"], "content": redact_sensitive_text(item["content"])}
             for item in conversation.messages
@@ -103,18 +150,23 @@ class PrivateAIService:
         if (
             safe_summary == conversation.summary
             and safe_messages == conversation.messages
+            and safe_task_goal == conversation.task_goal
         ):
             return conversation
         safe_conversation = PrivateAIConversation(
             conversation.active,
             safe_summary,
             safe_messages,
+            conversation.mode,
+            safe_task_goal,
         )
         self.database.set_private_ai_conversation(
             sender_id,
             safe_conversation.active,
             safe_conversation.summary,
             safe_conversation.messages,
+            mode=safe_conversation.mode,
+            task_goal=safe_conversation.task_goal,
         )
         return safe_conversation
 
