@@ -1,3 +1,6 @@
+import asyncio
+import json
+
 import httpx
 import pytest
 
@@ -44,18 +47,26 @@ class FakeSearchProvider:
     def __init__(self) -> None:
         """Initialize an empty query log."""
         self.queries: list[str] = []
+        self.domain_filters: list[tuple[str, ...]] = []
 
-    async def search(self, query: str, _: int) -> list[SearchResult]:
+    async def search(
+        self,
+        query: str,
+        _: int,
+        allowed_domains: tuple[str, ...] = (),
+    ) -> list[SearchResult]:
         """Return one deterministic source.
 
         Args:
             query: Research query to record.
             _: Ignored maximum source count.
+            allowed_domains: Official domain constraint to record.
 
         Returns:
             One public source.
         """
         self.queries.append(query)
+        self.domain_filters.append(allowed_domains)
         return [
             SearchResult(
                 "公开来源",
@@ -64,6 +75,29 @@ class FakeSearchProvider:
                 "2026-08-08",
             )
         ]
+
+
+class SlowSearchProvider:
+    """Wait long enough to exercise the whole-task deadline."""
+
+    async def search(
+        self,
+        _: str,
+        __: int,
+        ___: tuple[str, ...] = (),
+    ) -> list[SearchResult]:
+        """Delay beyond the configured task budget.
+
+        Args:
+            _: Ignored query.
+            __: Ignored maximum result count.
+            ___: Ignored official-domain constraint.
+
+        Returns:
+            This method does not normally return before cancellation.
+        """
+        await asyncio.sleep(1)
+        return []
 
 
 def make_service(tmp_path):
@@ -85,8 +119,10 @@ def make_service(tmp_path):
         FakePageExtractor(),
         10_000,
         8,
-        3,
+        6,
+        6,
         900,
+        90,
     )
     return PrivateAIService(
         database, FakeAIClient(), 10_000, 8, 8_000, research
@@ -157,6 +193,28 @@ async def test_research_task_caches_results_per_user_and_keeps_goal_on_clear(
 
 
 @pytest.mark.asyncio
+async def test_pricing_task_plans_official_queries_for_named_providers(
+    tmp_path,
+) -> None:
+    service, search = make_service(tmp_path)
+
+    await service.handle(
+        "user-a",
+        "开始任务：整理 DeepSeek、Qwen、Kimi、MiniMax 和 GLM 的 API 定价",
+    )
+
+    assert len(search.queries) == 6
+    assert search.domain_filters[:5] == [
+        ("api-docs.deepseek.com",),
+        ("help.aliyun.com", "dashscope.aliyuncs.com"),
+        ("platform.kimi.com", "kimi.com"),
+        ("platform.minimaxi.com", "platform.minimax.io"),
+        ("docs.bigmodel.cn", "open.bigmodel.cn"),
+    ]
+    assert all("官方 API 定价 服务端接入" in query for query in search.queries[:5])
+
+
+@pytest.mark.asyncio
 async def test_unconfigured_tavily_makes_no_http_request(monkeypatch) -> None:
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     called = False
@@ -172,3 +230,55 @@ async def test_unconfigured_tavily_makes_no_http_request(monkeypatch) -> None:
         await provider.search("test", 3)
 
     assert not called
+
+
+@pytest.mark.asyncio
+async def test_tavily_applies_official_domain_filter(monkeypatch) -> None:
+    monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+    request_body: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal request_body
+        request_body = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "title": "Unexpected domain",
+                        "url": "https://example.com/pricing",
+                        "content": "Not an official DeepSeek source.",
+                    }
+                ]
+            },
+        )
+
+    provider = TavilySearchProvider(transport=httpx.MockTransport(handler))
+
+    assert await provider.search("DeepSeek 官方 API 定价", 1, ("api-docs.deepseek.com",)) == []
+    assert request_body["include_domains"] == ["api-docs.deepseek.com"]
+
+
+@pytest.mark.asyncio
+async def test_task_deadline_returns_a_safe_status_without_a_model_answer(
+    tmp_path,
+) -> None:
+    database = PluginDatabase(tmp_path / "rennebot.sqlite3")
+    database.initialize()
+    research = ResearchTaskService(
+        database,
+        FakeAIClient(),
+        SlowSearchProvider(),
+        FakePageExtractor(),
+        10_000,
+        8,
+        6,
+        6,
+        900,
+        0.01,
+    )
+
+    reply = await research.start("user-a", "整理公开模型定价")
+
+    assert "未完成" in reply
+    assert "未使用不完整资料生成结论" in reply

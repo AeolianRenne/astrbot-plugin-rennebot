@@ -21,8 +21,10 @@ from .scripts.runtime_config import handle_config_message
 _PRIVATE_CONTEXT_MAX_CHARS_DEFAULT = 120_000
 _PRIVATE_CONTEXT_RECENT_MESSAGES_DEFAULT = 24
 _PRIVATE_MESSAGE_MAX_CHARS_DEFAULT = 8_000
-_RESEARCH_MAX_SOURCES_DEFAULT = 5
+_RESEARCH_MAX_SOURCES_DEFAULT = 6
+_RESEARCH_MAX_QUERIES_DEFAULT = 6
 _RESEARCH_CACHE_TTL_SECONDS_DEFAULT = 900
+_RESEARCH_TASK_TIMEOUT_SECONDS_DEFAULT = 90
 
 
 def _configured_ids(variable: str) -> set[str]:
@@ -86,9 +88,14 @@ class Main(Star):
                 _PRIVATE_CONTEXT_RECENT_MESSAGES_DEFAULT,
             ),
             _positive_int("AI_RESEARCH_MAX_SOURCES", _RESEARCH_MAX_SOURCES_DEFAULT),
+            _positive_int("AI_RESEARCH_MAX_QUERIES", _RESEARCH_MAX_QUERIES_DEFAULT),
             _positive_int(
                 "AI_RESEARCH_CACHE_TTL_SECONDS",
                 _RESEARCH_CACHE_TTL_SECONDS_DEFAULT,
+            ),
+            _positive_int(
+                "AI_RESEARCH_TASK_TIMEOUT_SECONDS",
+                _RESEARCH_TASK_TIMEOUT_SECONDS_DEFAULT,
             ),
         )
         self.private_ai = PrivateAIService(
