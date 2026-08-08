@@ -62,6 +62,7 @@ _RESEARCH_TASK_PREFIXES = (
     "开启任务：",
     "开启任务:",
 )
+_RESEARCH_TASK_END_COMMANDS = ("结束当前任务", "结束任务")
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,18 @@ def parse_research_task_start(message: str) -> str | None:
         if message.startswith(prefix):
             return message.removeprefix(prefix).strip()
     return None
+
+
+def is_research_task_end(message: str) -> bool:
+    """Check whether text requests that the active research task be ended.
+
+    Args:
+        message: Private plain text message.
+
+    Returns:
+        Whether the message is one of the supported task-end commands.
+    """
+    return message in _RESEARCH_TASK_END_COMMANDS
 
 
 def parse_group_command(message: str) -> ParsedCommand | None:

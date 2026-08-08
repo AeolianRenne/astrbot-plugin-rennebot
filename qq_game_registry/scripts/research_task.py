@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 import httpx
 
 from ..ai_client import AIConfigurationError, AIRequestError, OpenAICompatibleClient
+from ..commands import is_research_task_end
 from ..database import PluginDatabase, PrivateAIConversation
 from .public_web import PublicPageExtractor, is_public_http_url
 from .safety import (
@@ -222,6 +223,7 @@ class ResearchTaskService:
         context_recent_messages: int,
         max_sources: int,
         max_queries: int,
+        max_requests: int,
         cache_ttl_seconds: int,
         task_timeout_seconds: int,
     ) -> None:
@@ -236,6 +238,8 @@ class ResearchTaskService:
             context_recent_messages: Recent task messages retained after compaction.
             max_sources: Maximum sources injected and cited for one task turn.
             max_queries: Maximum focused and broad searches per task turn.
+            max_requests: Maximum logical public-web operations per task turn. A
+                Tavily query and a public-page extraction each consume one.
             cache_ttl_seconds: Per-user search-result cache lifetime.
             task_timeout_seconds: Whole-task budget for search, extraction, and AI.
         """
@@ -247,6 +251,7 @@ class ResearchTaskService:
         self.context_recent_messages = context_recent_messages
         self.max_sources = max_sources
         self.max_queries = max_queries
+        self.max_requests = max_requests
         self.cache_ttl_seconds = cache_ttl_seconds
         self.task_timeout_seconds = task_timeout_seconds
 
@@ -296,7 +301,7 @@ class ResearchTaskService:
         Returns:
             A task-control or citation-backed research response.
         """
-        if message == "结束当前任务":
+        if is_research_task_end(message):
             self.database.delete_cache_scope("research_search", "user", sender_id)
             self.database.delete_cache_scope("research_extract", "user", sender_id)
             self.database.set_private_ai_conversation(sender_id, False, "", [])
@@ -330,7 +335,7 @@ class ResearchTaskService:
         except TimeoutError:
             return (
                 f"本轮任务在 {self.task_timeout_seconds} 秒内未完成，已停止继续联网请求，"
-                "未使用不完整资料生成结论。任务仍保持开启；请稍后发送“继续”，或发送“结束当前任务”。"
+                "未使用不完整资料生成结论。任务仍保持开启；请稍后发送“继续”，或发送“结束当前任务”或“结束任务”。"
             )
 
     async def _research_within_budget(
@@ -443,7 +448,7 @@ class ResearchTaskService:
                 max_results=min(3, self.max_sources),
             )
         )
-        return queries[: self.max_queries]
+        return queries[: min(self.max_queries, self.max_requests)]
 
     async def _search_queries_cached(
         self, sender_id: str, queries: list[ResearchQuery]
@@ -478,9 +483,17 @@ class ResearchTaskService:
                 seen_urls.add(source.url)
                 sources.append(source)
                 if len(sources) >= self.max_sources:
-                    return await self._extract_public_pages(sender_id, sources)
+                    return await self._extract_public_pages(
+                        sender_id,
+                        sources,
+                        max(0, self.max_requests - len(queries)),
+                    )
         if sources:
-            return await self._extract_public_pages(sender_id, sources)
+            return await self._extract_public_pages(
+                sender_id,
+                sources,
+                max(0, self.max_requests - len(queries)),
+            )
         if not errors:
             return []
         if any(isinstance(error, ResearchConfigurationError) for error in errors):
@@ -544,26 +557,31 @@ class ResearchTaskService:
         return results
 
     async def _extract_public_pages(
-        self, sender_id: str, sources: list[SearchResult]
+        self, sender_id: str, sources: list[SearchResult], max_extractions: int
     ) -> list[SearchResult]:
         """Replace search snippets with bounded public-page text when available.
 
         Args:
             sender_id: QQ platform ID that owns this task and its extraction cache.
             sources: Search-provider sources already filtered to public HTTP(S) URLs.
+            max_extractions: Remaining logical public-web operation budget available
+                for page extraction.
 
         Returns:
             Sources whose evidence is public page text when extraction succeeds,
             otherwise their original search summaries.
         """
-        return list(
+        if max_extractions <= 0:
+            return sources
+        extracted_sources = list(
             await asyncio.gather(
                 *(
                     self._extract_public_page(sender_id, source)
-                    for source in sources[: self.max_sources]
+                    for source in sources[: min(self.max_sources, max_extractions)]
                 )
             )
         )
+        return [*extracted_sources, *sources[len(extracted_sources) :]]
 
     async def _extract_public_page(
         self, sender_id: str, source: SearchResult

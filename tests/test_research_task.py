@@ -3,7 +3,6 @@ import json
 
 import httpx
 import pytest
-
 from qq_game_registry.database import PluginDatabase
 from qq_game_registry.scripts.private_ai import PrivateAIService
 from qq_game_registry.scripts.research_task import (
@@ -17,15 +16,20 @@ from qq_game_registry.scripts.research_task import (
 class FakePageExtractor:
     """Keep existing research-task tests independent from page retrieval."""
 
-    async def extract(self, _: str) -> str | None:
+    def __init__(self) -> None:
+        """Initialize an empty extraction log."""
+        self.urls: list[str] = []
+
+    async def extract(self, url: str) -> str | None:
         """Return no page text so the search summary remains the evidence.
 
         Args:
-            _: Ignored source URL.
+            url: Source URL to record.
 
         Returns:
             No extracted content.
         """
+        self.urls.append(url)
         return None
 
 
@@ -121,6 +125,7 @@ def make_service(tmp_path):
         8,
         6,
         6,
+        12,
         900,
         90,
     )
@@ -145,8 +150,10 @@ async def test_conversation_and_research_task_are_mutually_exclusive(tmp_path) -
     assert "https://example.com/research" in research_reply
     assert len(search.queries) == 1
 
-    assert "请先发送“结束当前任务”" in await service.handle("user-a", "开启新对话")
-    assert "当前任务已结束" in await service.handle("user-a", "结束当前任务")
+    assert "请先发送“结束当前任务”或“结束任务”" in await service.handle(
+        "user-a", "开启新对话"
+    )
+    assert "当前任务已结束" in await service.handle("user-a", "结束任务")
     assert "已开启新对话" in await service.handle("user-a", "开启新对话")
 
 
@@ -215,6 +222,38 @@ async def test_pricing_task_plans_official_queries_for_named_providers(
 
 
 @pytest.mark.asyncio
+async def test_task_operation_budget_caps_searches_and_page_extractions(
+    tmp_path,
+) -> None:
+    """Keep a task turn within its configured logical public-web budget."""
+    database = PluginDatabase(tmp_path / "rennebot.sqlite3")
+    database.initialize()
+    search = FakeSearchProvider()
+    pages = FakePageExtractor()
+    research = ResearchTaskService(
+        database,
+        FakeAIClient(),
+        search,
+        pages,
+        10_000,
+        8,
+        6,
+        6,
+        2,
+        900,
+        90,
+    )
+
+    await research.start(
+        "user-a",
+        "整理 DeepSeek、Qwen、Kimi、MiniMax 和 GLM 的 API 定价",
+    )
+
+    assert len(search.queries) == 2
+    assert pages.urls == []
+
+
+@pytest.mark.asyncio
 async def test_unconfigured_tavily_makes_no_http_request(monkeypatch) -> None:
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     called = False
@@ -255,7 +294,10 @@ async def test_tavily_applies_official_domain_filter(monkeypatch) -> None:
 
     provider = TavilySearchProvider(transport=httpx.MockTransport(handler))
 
-    assert await provider.search("DeepSeek 官方 API 定价", 1, ("api-docs.deepseek.com",)) == []
+    assert (
+        await provider.search("DeepSeek 官方 API 定价", 1, ("api-docs.deepseek.com",))
+        == []
+    )
     assert request_body["include_domains"] == ["api-docs.deepseek.com"]
 
 
@@ -274,6 +316,7 @@ async def test_task_deadline_returns_a_safe_status_without_a_model_answer(
         8,
         6,
         6,
+        12,
         900,
         0.01,
     )
