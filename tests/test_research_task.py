@@ -45,6 +45,25 @@ class FakeAIClient:
         return "已根据来源完成整理。"
 
 
+class PlanningAIClient:
+    """Return a follow-up search plan, then a deterministic final answer."""
+
+    def __init__(self) -> None:
+        """Initialize the request counter."""
+        self.calls = 0
+
+    async def ask_messages(self, _: list[dict[str, str]]) -> str:
+        """Return bounded planner JSON before the final answer.
+
+        Returns:
+            Planner JSON for the first call and an answer afterwards.
+        """
+        self.calls += 1
+        if self.calls == 1:
+            return '{"queries": ["Kimi API pricing", "MiniMax API pricing"]}'
+        return "已根据来源完成整理。"
+
+
 class FakeSearchProvider:
     """Record queries and return one safe public source."""
 
@@ -125,6 +144,7 @@ def make_service(tmp_path):
         8,
         6,
         6,
+        2,
         12,
         900,
         90,
@@ -240,6 +260,7 @@ async def test_task_operation_budget_caps_searches_and_page_extractions(
         6,
         6,
         2,
+        2,
         900,
         90,
     )
@@ -251,6 +272,35 @@ async def test_task_operation_budget_caps_searches_and_page_extractions(
 
     assert len(search.queries) == 2
     assert pages.urls == []
+
+
+@pytest.mark.asyncio
+async def test_generic_task_uses_evidence_to_plan_a_second_search_round(
+    tmp_path,
+) -> None:
+    """Plan targeted follow-up searches without giving the model direct web access."""
+    database = PluginDatabase(tmp_path / "rennebot.sqlite3")
+    database.initialize()
+    search = FakeSearchProvider()
+    research = ResearchTaskService(
+        database,
+        PlanningAIClient(),
+        search,
+        FakePageExtractor(),
+        10_000,
+        8,
+        6,
+        6,
+        2,
+        12,
+        900,
+        90,
+    )
+
+    await research.start("user-a", "整理公开的 AI 模型服务和 API 定价")
+
+    assert len(search.queries) == 3
+    assert search.queries[1:] == ["Kimi API pricing", "MiniMax API pricing"]
 
 
 @pytest.mark.asyncio
@@ -316,6 +366,7 @@ async def test_task_deadline_returns_a_safe_status_without_a_model_answer(
         8,
         6,
         6,
+        2,
         12,
         900,
         0.01,
