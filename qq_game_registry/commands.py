@@ -56,6 +56,12 @@ _CONFIG_KEYS = {
     "ai-groups": "ai_group_ids",
     "admins": "admin_user_ids",
 }
+_RESEARCH_TASK_PREFIXES = (
+    "开始任务：",
+    "开始任务:",
+    "开启任务：",
+    "开启任务:",
+)
 
 
 @dataclass(frozen=True)
@@ -65,6 +71,22 @@ class RuntimeConfigCommand:
     action: str
     setting_key: str | None = None
     values: tuple[str, ...] = ()
+
+
+def parse_research_task_start(message: str) -> str | None:
+    """Parse either supported private research-task start prefix.
+
+    Args:
+        message: Private plain text message.
+
+    Returns:
+        The trimmed task goal, including an empty string for a missing goal, or
+        ``None`` when the message is not a task-start command.
+    """
+    for prefix in _RESEARCH_TASK_PREFIXES:
+        if message.startswith(prefix):
+            return message.removeprefix(prefix).strip()
+    return None
 
 
 def parse_group_command(message: str) -> ParsedCommand | None:

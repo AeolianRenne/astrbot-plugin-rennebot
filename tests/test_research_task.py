@@ -88,7 +88,9 @@ def make_service(tmp_path):
         3,
         900,
     )
-    return PrivateAIService(database, FakeAIClient(), 10_000, 8, 8_000, research), search
+    return PrivateAIService(
+        database, FakeAIClient(), 10_000, 8, 8_000, research
+    ), search
 
 
 @pytest.mark.asyncio
@@ -113,7 +115,29 @@ async def test_conversation_and_research_task_are_mutually_exclusive(tmp_path) -
 
 
 @pytest.mark.asyncio
-async def test_research_task_caches_results_per_user_and_keeps_goal_on_clear(tmp_path) -> None:
+async def test_task_start_alias_sends_status_before_external_requests(tmp_path) -> None:
+    service, search = make_service(tmp_path)
+    status_updates: list[str] = []
+
+    async def notify_started() -> None:
+        """Record the point at which a valid task was persisted."""
+        status_updates.append("started")
+
+    reply = await service.handle(
+        "user-a",
+        "开启任务：整理近期 AI 新闻",
+        notify_started,
+    )
+
+    assert status_updates == ["started"]
+    assert len(search.queries) == 1
+    assert "已开始任务" not in reply
+
+
+@pytest.mark.asyncio
+async def test_research_task_caches_results_per_user_and_keeps_goal_on_clear(
+    tmp_path,
+) -> None:
     service, search = make_service(tmp_path)
 
     await service.handle("user-a", "开始任务：跟踪模型更新")

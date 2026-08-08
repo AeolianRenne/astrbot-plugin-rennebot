@@ -5,6 +5,7 @@ from qq_game_registry.commands import (
     CommandKind,
     message_text_from_plain_components,
     parse_group_command,
+    parse_research_task_start,
     parse_runtime_config_command,
 )
 
@@ -67,3 +68,10 @@ def test_prefers_plain_component_text_for_c2c_command() -> None:
     )
 
     assert message == "/renne-id"
+
+
+def test_parse_research_task_start_accepts_both_chinese_verbs_and_colons() -> None:
+    assert parse_research_task_start("开始任务：整理新闻") == "整理新闻"
+    assert parse_research_task_start("开启任务:整理新闻") == "整理新闻"
+    assert parse_research_task_start("开始任务：") == ""
+    assert parse_research_task_start("整理新闻") is None

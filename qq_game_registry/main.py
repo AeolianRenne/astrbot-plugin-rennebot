@@ -154,7 +154,13 @@ class Main(Star):
                     self._setting_ids,
                 )
             elif sender_id in self._setting_ids("ai_private_user_ids") and message:
-                response = await self.private_ai.handle(sender_id, message)
+                response = await self.private_ai.handle(
+                    sender_id,
+                    message,
+                    lambda: event.send(
+                        event.plain_result("已收到任务，正在检索公开来源，请稍候。")
+                    ),
+                )
             else:
                 response = None
             if response:

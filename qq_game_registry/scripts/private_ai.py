@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from ..ai_client import OpenAICompatibleClient
+from ..commands import parse_research_task_start
 from ..database import PluginDatabase, PrivateAIConversation
 from .research_task import ResearchTaskService
 from .safety import (
@@ -45,27 +48,26 @@ class PrivateAIService:
         self.message_max_chars = message_max_chars
         self.research_task = research_task
 
-    async def handle(self, sender_id: str, message: str) -> str | None:
+    async def handle(
+        self,
+        sender_id: str,
+        message: str,
+        on_research_started: Callable[[], Awaitable[None]] | None = None,
+    ) -> str | None:
         """Handle one authorized user's private message.
 
         Args:
             sender_id: QQ platform user ID that owns the conversation.
             message: Plain text message sent in the private chat.
+            on_research_started: Optional notification sent only after a new task
+                has passed validation and been persisted.
 
         Returns:
             A response when a command or active conversation handles the message.
         """
         conversation = self._load_sanitized_conversation(sender_id)
-        research_prefix = next(
-            (
-                prefix
-                for prefix in ("开始任务：", "开始任务:")
-                if message.startswith(prefix)
-            ),
-            None,
-        )
-        if research_prefix:
-            goal = message.removeprefix(research_prefix).strip()
+        goal = parse_research_task_start(message)
+        if goal is not None:
             if not goal:
                 return "请在“开始任务：”后说明需要完成的任务目标。"
             if conversation.mode == "conversation":
@@ -78,7 +80,11 @@ class PrivateAIService:
                 return (
                     "为保护安全，请不要在任务中发送密钥、令牌、密码、私钥或服务器配置。"
                 )
-            return await self.research_task.start(sender_id, goal)
+            return await self.research_task.start(
+                sender_id,
+                goal,
+                on_research_started,
+            )
         if message == "结束当前任务" and conversation.mode != "research_task":
             return "当前没有进行中的任务。"
         if message == "开启新对话":

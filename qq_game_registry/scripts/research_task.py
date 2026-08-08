@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
@@ -165,12 +166,19 @@ class ResearchTaskService:
         self.max_sources = max_sources
         self.cache_ttl_seconds = cache_ttl_seconds
 
-    async def start(self, sender_id: str, goal: str) -> str:
+    async def start(
+        self,
+        sender_id: str,
+        goal: str,
+        on_started: Callable[[], Awaitable[None]] | None = None,
+    ) -> str:
         """Create a fresh research task and perform its first research turn.
 
         Args:
             sender_id: QQ platform ID that exclusively owns the task.
             goal: Explicit user-provided research objective.
+            on_started: Optional notification sent after task state is persisted
+                and before external requests begin.
 
         Returns:
             A cited first response or a safe configuration/request message.
@@ -183,8 +191,10 @@ class ResearchTaskService:
             mode="research_task",
             task_goal=goal,
         )
+        if on_started:
+            await on_started()
         response = await self._research(sender_id, goal, "")
-        return f"已开始任务：{goal}\n\n{response}"
+        return response if on_started else f"已开始任务：{goal}\n\n{response}"
 
     async def handle(
         self,
