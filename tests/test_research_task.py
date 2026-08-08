@@ -11,6 +11,21 @@ from qq_game_registry.scripts.research_task import (
 )
 
 
+class FakePageExtractor:
+    """Keep existing research-task tests independent from page retrieval."""
+
+    async def extract(self, _: str) -> str | None:
+        """Return no page text so the search summary remains the evidence.
+
+        Args:
+            _: Ignored source URL.
+
+        Returns:
+            No extracted content.
+        """
+        return None
+
+
 class FakeAIClient:
     """Return a deterministic answer without an external model request."""
 
@@ -63,7 +78,16 @@ def make_service(tmp_path):
     database = PluginDatabase(tmp_path / "rennebot.sqlite3")
     database.initialize()
     search = FakeSearchProvider()
-    research = ResearchTaskService(database, FakeAIClient(), search, 10_000, 8, 3, 900)
+    research = ResearchTaskService(
+        database,
+        FakeAIClient(),
+        search,
+        FakePageExtractor(),
+        10_000,
+        8,
+        3,
+        900,
+    )
     return PrivateAIService(database, FakeAIClient(), 10_000, 8, 8_000, research), search
 
 

@@ -14,6 +14,7 @@ from .commands import message_text_from_plain_components
 from .database import PluginDatabase
 from .scripts.group_registry import handle_group_message
 from .scripts.private_ai import PrivateAIService
+from .scripts.public_web import PublicWebExtractor
 from .scripts.research_task import ResearchTaskService, TavilySearchProvider
 from .scripts.runtime_config import handle_config_message
 
@@ -76,6 +77,7 @@ class Main(Star):
             self.database,
             self.ai_client,
             TavilySearchProvider(),
+            PublicWebExtractor(),
             _positive_int(
                 "AI_PRIVATE_CONTEXT_MAX_CHARS", _PRIVATE_CONTEXT_MAX_CHARS_DEFAULT
             ),

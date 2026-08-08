@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
-from urllib.parse import urlparse
 
 import httpx
 
 from ..ai_client import AIConfigurationError, AIRequestError, OpenAICompatibleClient
 from ..database import PluginDatabase, PrivateAIConversation
+from .public_web import PublicPageExtractor, is_public_http_url
 from .safety import (
     PRIVATE_AI_SAFETY_PROMPT,
     PRIVATE_SUMMARY_SAFETY_PROMPT,
@@ -46,6 +45,7 @@ class SearchResult:
     url: str
     content: str
     published_date: str = ""
+    content_kind: str = "搜索摘要"
 
 
 class SearchProvider(Protocol):
@@ -115,7 +115,7 @@ class TavilySearchProvider:
             content = item.get("content")
             if not all(isinstance(value, str) for value in (title, url, content)):
                 continue
-            if not _is_public_http_url(url):
+            if not is_public_http_url(url):
                 continue
             results.append(
                 SearchResult(
@@ -138,6 +138,7 @@ class ResearchTaskService:
         database: PluginDatabase,
         ai_client: OpenAICompatibleClient,
         search_provider: SearchProvider,
+        page_extractor: PublicPageExtractor,
         context_max_chars: int,
         context_recent_messages: int,
         max_sources: int,
@@ -149,6 +150,7 @@ class ResearchTaskService:
             database: Persistent, user-scoped plugin storage.
             ai_client: Configured OpenAI-compatible chat client.
             search_provider: Restricted public-web search implementation.
+            page_extractor: Credential-free public HTML text extractor.
             context_max_chars: Task-memory character budget before summarization.
             context_recent_messages: Recent task messages retained after compaction.
             max_sources: Maximum sources injected and cited for one task turn.
@@ -157,6 +159,7 @@ class ResearchTaskService:
         self.database = database
         self.ai_client = ai_client
         self.search_provider = search_provider
+        self.page_extractor = page_extractor
         self.context_max_chars = context_max_chars
         self.context_recent_messages = context_recent_messages
         self.max_sources = max_sources
@@ -201,6 +204,7 @@ class ResearchTaskService:
         """
         if message == "结束当前任务":
             self.database.delete_cache_scope("research_search", "user", sender_id)
+            self.database.delete_cache_scope("research_extract", "user", sender_id)
             self.database.set_private_ai_conversation(sender_id, False, "", [])
             return "当前任务已结束。需要普通对话时，请发送“开启新对话”。"
         if message == "清理上下文":
@@ -253,7 +257,8 @@ class ResearchTaskService:
 
         evidence = "\n\n".join(
             f"[{index}] 标题：{source.title}\n链接：{source.url}\n"
-            f"发布时间：{source.published_date or '未知'}\n摘要：{source.content}"
+            f"发布时间：{source.published_date or '未知'}\n"
+            f"证据类型：{source.content_kind}\n内容：{source.content}"
             for index, source in enumerate(sources, start=1)
         )
         request_messages: list[dict[str, str]] = [
@@ -280,7 +285,7 @@ class ResearchTaskService:
         except (AIConfigurationError, AIRequestError) as error:
             return str(error)
         citations = "\n".join(
-            f"[{index}] {source.title} — {source.url}"
+            f"[{index}] {source.title}（{source.content_kind}）— {source.url}"
             for index, source in enumerate(sources, start=1)
         )
         self.database.set_private_ai_conversation(
@@ -313,7 +318,7 @@ class ResearchTaskService:
                 if not all(
                     isinstance(item.get(field), str)
                     for field in ("title", "url", "content")
-                ) or not _is_public_http_url(item["url"]):
+                ) or not is_public_http_url(item["url"]):
                     continue
                 published_date = item.get("published_date", "")
                 results.append(
@@ -322,10 +327,13 @@ class ResearchTaskService:
                         item["url"],
                         item["content"],
                         published_date if isinstance(published_date, str) else "",
+                        item.get("content_kind", "搜索摘要")
+                        if isinstance(item.get("content_kind", "搜索摘要"), str)
+                        else "搜索摘要",
                     )
                 )
             if results:
-                return results[: self.max_sources]
+                return await self._extract_public_pages(sender_id, results)
         results = await self.search_provider.search(query, self.max_sources)
         self.database.set_cache(
             "research_search",
@@ -335,7 +343,50 @@ class ResearchTaskService:
             [source.__dict__ for source in results],
             datetime.now(UTC) + timedelta(seconds=self.cache_ttl_seconds),
         )
-        return results
+        return await self._extract_public_pages(sender_id, results)
+
+    async def _extract_public_pages(
+        self, sender_id: str, sources: list[SearchResult]
+    ) -> list[SearchResult]:
+        """Replace search snippets with bounded public-page text when available.
+
+        Args:
+            sender_id: QQ platform ID that owns this task and its extraction cache.
+            sources: Search-provider sources already filtered to public HTTP(S) URLs.
+
+        Returns:
+            Sources whose evidence is public page text when extraction succeeds,
+            otherwise their original search summaries.
+        """
+        enriched: list[SearchResult] = []
+        for source in sources[: self.max_sources]:
+            key = hashlib.sha256(source.url.encode()).hexdigest()
+            cached = self.database.get_cache("research_extract", "user", sender_id, key)
+            content = cached.get("content") if isinstance(cached, dict) else None
+            if not isinstance(content, str):
+                content = await self.page_extractor.extract(source.url)
+                if content:
+                    self.database.set_cache(
+                        "research_extract",
+                        "user",
+                        sender_id,
+                        key,
+                        {"content": content},
+                        datetime.now(UTC) + timedelta(seconds=self.cache_ttl_seconds),
+                    )
+            if content:
+                enriched.append(
+                    SearchResult(
+                        source.title,
+                        source.url,
+                        content,
+                        source.published_date,
+                        "公开网页正文",
+                    )
+                )
+            else:
+                enriched.append(source)
+        return enriched
 
     async def _summarize(self, summary: str, messages: list[dict[str, str]]) -> str:
         """Compress old task turns without retaining hidden reasoning.
@@ -363,33 +414,3 @@ class ResearchTaskService:
             ]
         )
         return redact_sensitive_text(response)[:_SUMMARY_MAX_CHARS]
-
-
-def _is_public_http_url(value: str) -> bool:
-    """Reject non-HTTP, localhost, and direct private-network source URLs.
-
-    Args:
-        value: Candidate source URL supplied by an external search provider.
-
-    Returns:
-        Whether the URL is safe to cite as a public source without fetching it.
-    """
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        return False
-    hostname = parsed.hostname.casefold()
-    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(
-        ".local"
-    ):
-        return False
-    try:
-        address = ipaddress.ip_address(hostname)
-    except ValueError:
-        return True
-    return not (
-        address.is_private
-        or address.is_loopback
-        or address.is_link_local
-        or address.is_reserved
-        or address.is_unspecified
-    )
