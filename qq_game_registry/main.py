@@ -137,12 +137,14 @@ class Main(Star):
         Yields:
             A plain response when a command or authorized AI request needs one.
         """
+        response = None
         try:
             group_id = event.get_group_id()
             sender_id = event.get_sender_id()
             platform_name = event.get_platform_name()
             self_id = str(getattr(event.message_obj, "self_id", "") or "")
             if is_onebot_self_message(platform_name, sender_id, self_id):
+                event.stop_event()
                 return
             messages = event.get_messages()
             message = message_text_from_plain_components(
@@ -193,13 +195,15 @@ class Main(Star):
                 )
             else:
                 response = None
-            if response:
-                yield event.plain_result(response)
         except Exception as error:
             self.logger.exception("qq_game_registry message handling failed: %s", error)
-            yield event.plain_result("处理消息时发生了错误，请稍后再试。")
-        finally:
-            event.stop_event()
+            response = "处理消息时发生了错误，请稍后再试。"
+
+        # Stop propagation before yielding a reply so no later AstrBot handler can
+        # consume the same addressed command and send a duplicate response.
+        event.stop_event()
+        if response:
+            yield event.plain_result(response)
 
     def _setting_ids(self, key: str) -> set[str]:
         """Read a platform-ID setting stored in SQLite.
