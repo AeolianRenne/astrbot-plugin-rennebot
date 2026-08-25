@@ -13,6 +13,7 @@ from .ai_client import AIConfigurationError, AIRequestError, OpenAICompatibleCli
 from .commands import message_text_from_plain_components
 from .database import PluginDatabase
 from .scripts.group_registry import handle_group_message
+from .scripts.banpick import BanpickService
 from .scripts.private_ai import PrivateAIService
 from .scripts.public_web import PublicWebExtractor
 from .scripts.research_task import ResearchTaskService, TavilySearchProvider
@@ -117,6 +118,7 @@ class Main(Star):
             ),
             self.research_task,
         )
+        self.banpick = BanpickService()
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=100)
     @filter.platform_adapter_type(filter.PlatformAdapterType.QQOFFICIAL)
@@ -142,19 +144,23 @@ class Main(Star):
                 event.message_str,
             )
             if group_id:
-                response = (
-                    await handle_group_message(
-                        event,
-                        group_id,
-                        sender_id,
+                response = None
+                if any(isinstance(component, At) for component in messages):
+                    response = await self.banpick.handle(
                         message,
-                        self.database,
-                        self._setting_ids,
-                        self._ask_group_ai,
+                        sender_id,
+                        self._setting_ids("admin_user_ids"),
                     )
-                    if any(isinstance(component, At) for component in messages)
-                    else None
-                )
+                    if response is None:
+                        response = await handle_group_message(
+                            event,
+                            group_id,
+                            sender_id,
+                            message,
+                            self.database,
+                            self._setting_ids,
+                            self._ask_group_ai,
+                        )
             elif message == "/renne-id":
                 response = f"你的 UserID 是：{sender_id}"
             elif message.startswith("/renne-config"):
