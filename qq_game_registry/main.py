@@ -1,4 +1,4 @@
-"""AstrBot entrypoint for controlled QQ Official Bot message handling."""
+"""AstrBot entrypoint for controlled QQ Official Bot and OneBot handling."""
 
 from __future__ import annotations
 
@@ -12,8 +12,12 @@ from astrbot.core.star.star_tools import StarTools
 from .ai_client import AIConfigurationError, AIRequestError, OpenAICompatibleClient
 from .commands import message_text_from_plain_components
 from .database import PluginDatabase
-from .scripts.group_registry import handle_group_message
 from .scripts.banpick import BanpickService
+from .scripts.group_registry import handle_group_message
+from .scripts.platform_support import (
+    is_onebot_self_message,
+    platform_label,
+)
 from .scripts.private_ai import PrivateAIService
 from .scripts.public_web import PublicWebExtractor
 from .scripts.research_task import ResearchTaskService, TavilySearchProvider
@@ -60,7 +64,7 @@ def _positive_int(variable: str, default: int) -> int:
 
 
 class Main(Star):
-    """Route QQ Official events to RenneBot feature modules."""
+    """Route QQ Official Bot and OneBot personal-account events to RenneBot."""
 
     def __init__(self, context: Context) -> None:
         """Initialize infrastructure and feature services.
@@ -121,12 +125,14 @@ class Main(Star):
         self.banpick = BanpickService()
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=100)
-    @filter.platform_adapter_type(filter.PlatformAdapterType.QQOFFICIAL)
+    @filter.platform_adapter_type(
+        filter.PlatformAdapterType.QQOFFICIAL | filter.PlatformAdapterType.AIOCQHTTP
+    )
     async def route_message(self, event: AstrMessageEvent):
         """Route permitted QQ messages and block AstrBot's default LLM flow.
 
         Args:
-            event: Incoming QQ Official message event.
+            event: Incoming QQ Official Bot or OneBot message event.
 
         Yields:
             A plain response when a command or authorized AI request needs one.
@@ -134,6 +140,10 @@ class Main(Star):
         try:
             group_id = event.get_group_id()
             sender_id = event.get_sender_id()
+            platform_name = event.get_platform_name()
+            self_id = str(getattr(event.message_obj, "self_id", "") or "")
+            if is_onebot_self_message(platform_name, sender_id, self_id):
+                return
             messages = event.get_messages()
             message = message_text_from_plain_components(
                 (
@@ -162,7 +172,10 @@ class Main(Star):
                             self._ask_group_ai,
                         )
             elif message == "/renne-id":
-                response = f"你的 UserID 是：{sender_id}"
+                response = (
+                    f"平台：{platform_label(platform_name)}\n"
+                    f"你的 UserID 是：{sender_id}"
+                )
             elif message.startswith("/renne-config"):
                 response = handle_config_message(
                     sender_id,
