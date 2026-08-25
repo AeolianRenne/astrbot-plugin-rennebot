@@ -46,6 +46,18 @@ class BanpickService:
             if command == "下一局" and len(parts) == 3:
                 state = await self._request("POST", f"/api/internal/series/{parts[2]}/next")
                 return f"已创建 {state['series']['code']} 的第 {state['game']['number']} 局，请双方重新确认准备。"
+            if command in {"赛制", "调整赛制"} and len(parts) == 4:
+                if sender_id not in admin_ids:
+                    return "只有机器人管理员可以调整赛事赛制。"
+                best_of = parts[3].upper()
+                if best_of not in {"BO3", "BO5"}:
+                    return "赛制只能向上调整为 BO3 或 BO5。"
+                state = await self._request(
+                    "POST",
+                    f"/api/internal/series/{parts[2]}/format",
+                    {"best_of": int(best_of[-1])},
+                )
+                return f"赛事 {state['series']['code']} 已调整为 BO{state['series']['best_of']}。"
             if command == "结束" and len(parts) == 3:
                 state = await self._request("POST", f"/api/internal/series/{parts[2]}/end")
                 return f"赛事 {state['series']['code']} 已结束。"
@@ -142,5 +154,6 @@ class BanpickService:
         """Return the BP command reference."""
         return (
             "BP 指令：\n/BP 创建 [BO1|BO3|BO5] [常规]\n/BP 状态 <赛事编号>\n"
-            "/BP 下一局 <赛事编号>\n/BP 结束 <赛事编号>\n/BP 更新英雄（管理员）"
+            "/BP 下一局 <赛事编号>\n/BP 赛制 <赛事编号> <BO3|BO5>（管理员）\n"
+            "/BP 结束 <赛事编号>\n/BP 更新英雄（管理员）"
         )
