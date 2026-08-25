@@ -153,7 +153,7 @@ class Main(Star):
                 ),
                 event.message_str,
             )
-            if group_id:
+            if group_id and group_id in self._setting_ids("enabled_group_ids"):
                 response = None
                 if any(isinstance(component, At) for component in messages):
                     response = await self.banpick.handle(

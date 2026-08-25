@@ -52,6 +52,7 @@ class CommandError(ValueError):
 
 _NUMBER = re.compile(r"^\d{1,64}$")
 _CONFIG_KEYS = {
+    "groups": "enabled_group_ids",
     "ai-users": "ai_private_user_ids",
     "ai-groups": "ai_group_ids",
     "admins": "admin_user_ids",
@@ -181,7 +182,7 @@ def parse_runtime_config_command(message: str) -> RuntimeConfigCommand | None:
     if len(parts) != 4 or parts[2] != "set" or parts[1] not in _CONFIG_KEYS:
         raise CommandError(
             "用法：/renne-config show 或 /renne-config "
-            "<ai-users|ai-groups|admins> set <id,id>"
+            "<groups|ai-users|ai-groups|admins> set <id,id>"
         )
     values = tuple(item.strip() for item in parts[3].split(",") if item.strip())
     if not values or any(

@@ -1,5 +1,4 @@
 import pytest
-
 from qq_game_registry.commands import (
     CommandError,
     CommandKind,
@@ -55,6 +54,15 @@ def test_parses_runtime_configuration() -> None:
     assert command is not None
     assert command.setting_key == "ai_private_user_ids"
     assert command.values == ("id-1", "id-2")
+
+
+def test_parses_group_response_whitelist_configuration() -> None:
+    """Keep the all-group response gate independently configurable from group AI."""
+    command = parse_runtime_config_command("/renne-config groups set group-1,group-2")
+
+    assert command is not None
+    assert command.setting_key == "enabled_group_ids"
+    assert command.values == ("group-1", "group-2")
 
 
 def test_non_command_is_ignored() -> None:

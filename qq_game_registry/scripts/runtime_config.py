@@ -34,10 +34,12 @@ def handle_config_message(
     if command is None:
         return "未知配置指令。"
     if command.action == "show":
+        enabled_groups = ", ".join(sorted(setting_ids("enabled_group_ids")))
         private_users = ", ".join(sorted(setting_ids("ai_private_user_ids")))
         groups = ", ".join(sorted(setting_ids("ai_group_ids")))
         admins = ", ".join(sorted(setting_ids("admin_user_ids")))
         return (
+            f"群聊功能白名单：{enabled_groups or '（未配置）'}\n"
             f"AI 私聊白名单：{private_users or '（未配置）'}\n"
             f"AI 群聊白名单：{groups or '（未配置）'}\n"
             f"机器人管理员：{admins or '（未配置）'}"
@@ -46,6 +48,7 @@ def handle_config_message(
         return "管理员列表必须保留你自己的 ID，避免失去管理权限。"
     database.set_setting(command.setting_key or "", sorted(set(command.values)))
     setting_names = {
+        "enabled_group_ids": "群聊功能白名单",
         "ai_private_user_ids": "AI 私聊白名单",
         "ai_group_ids": "AI 群聊白名单",
         "admin_user_ids": "机器人管理员",
